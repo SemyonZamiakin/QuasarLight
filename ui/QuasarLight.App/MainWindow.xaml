@@ -47,7 +47,7 @@
                                 <TextBlock Text="BACKEND" Style="{StaticResource SectionLabel}" Margin="0,0,0,6"/>
                                 <StackPanel Orientation="Horizontal">
                                     <Ellipse x:Name="BackendDot" Width="8" Height="8" Fill="{StaticResource WarnBrush}" VerticalAlignment="Center"/>
-                                    <TextBlock x:Name="BackendText" Text="OpenRGB: not connected" Margin="8,0,0,0" Foreground="{StaticResource TextBrush}"/>
+                                    <TextBlock x:Name="BackendText" Text="OpenRGB: not connected" Margin="8,0,0,0" Foreground="{StaticResource TextBrush}" TextWrapping="Wrap" MaxWidth="190"/>
                                 </StackPanel>
                                 <TextBlock x:Name="ModeNote" TextWrapping="Wrap" Margin="0,6,0,10" FontSize="11" Foreground="{StaticResource MutedBrush}"
                                            Text="Hardware is controlled through a local OpenRGB server. Until connected, changes affect the preview only."/>
@@ -68,15 +68,32 @@
                         <RowDefinition Height="*"/>
                         <RowDefinition Height="Auto"/>
                     </Grid.RowDefinitions>
-                    <StackPanel>
-                        <TextBlock x:Name="StageTitle" FontSize="18" FontWeight="SemiBold" Foreground="{StaticResource TextBrush}"/>
-                        <TextBlock x:Name="StageSub" Margin="0,3,0,0" Foreground="{StaticResource MutedBrush}"/>
-                    </StackPanel>
+                    <DockPanel>
+                        <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Top">
+                            <Button x:Name="ImgSetBtn" Style="{StaticResource GhostBtn}" Content="Set image..." Click="ImgSet_Click" ToolTip="Use your own photo of this device"/>
+                            <Button x:Name="ImgClearBtn" Style="{StaticResource GhostBtn}" Content="Clear" Margin="6,0,0,0" Click="ImgClear_Click" IsEnabled="False"/>
+                        </StackPanel>
+                        <StackPanel>
+                            <TextBlock x:Name="StageTitle" FontSize="18" FontWeight="SemiBold" Foreground="{StaticResource TextBrush}"/>
+                            <TextBlock x:Name="StageSub" Margin="0,3,0,0" Foreground="{StaticResource MutedBrush}"/>
+                        </StackPanel>
+                    </DockPanel>
                     <Border Grid.Row="1" Margin="0,14,0,14" CornerRadius="6" ClipToBounds="True" Background="#0B0C0F"
                             BorderBrush="{StaticResource Line}" BorderThickness="1">
-                        <Viewbox Stretch="Uniform" Margin="10">
-                            <Canvas x:Name="Stage" Width="620" Height="440"/>
-                        </Viewbox>
+                        <Grid>
+                            <Viewbox x:Name="StageBox" Stretch="Uniform" Margin="10">
+                                <Canvas x:Name="Stage" Width="620" Height="440"/>
+                            </Viewbox>
+                            <Grid x:Name="DeviceView" Visibility="Collapsed" Margin="10">
+                                <Ellipse x:Name="DevGlow" Width="480" Height="300" HorizontalAlignment="Center" VerticalAlignment="Center" Opacity="0.30" IsHitTestVisible="False">
+                                    <Ellipse.Effect><BlurEffect Radius="80"/></Ellipse.Effect>
+                                </Ellipse>
+                                <Image x:Name="DevImage" Stretch="Uniform" Margin="40,30,40,90" RenderOptions.BitmapScalingMode="HighQuality"/>
+                                <TextBlock x:Name="DevNoImage" Text="No image. Press 'Set image...' to add a photo of this device."
+                                           HorizontalAlignment="Center" VerticalAlignment="Center" Margin="0,0,0,60" Foreground="{StaticResource DimBrush}"/>
+                                <StackPanel x:Name="LedBar" Orientation="Horizontal" HorizontalAlignment="Center" VerticalAlignment="Bottom" Margin="0,0,0,34"/>
+                            </Grid>
+                        </Grid>
                     </Border>
                     <Border Grid.Row="2" CornerRadius="6" Padding="14,10" Background="{StaticResource PanelBg}" BorderBrush="{StaticResource Line}" BorderThickness="1">
                         <TextBlock x:Name="InfoText" FontFamily="Consolas" FontSize="12" Foreground="#BFC5D2" LineHeight="19"/>

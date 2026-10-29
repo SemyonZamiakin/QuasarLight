@@ -32,6 +32,8 @@ namespace QuasarLight
         private bool _connected;
         private string _openRgbPath = "";
         private const int OrgbPort = 6742;
+        private readonly Dictionary<string, EffectSettings> _savedSettings = new Dictionary<string, EffectSettings>();
+        private readonly Dictionary<string, string> _savedImages = new Dictionary<string, string>();
         private static readonly string SettingsPath =
             Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "QuasarLight", "settings.json");
 
@@ -121,7 +123,11 @@ namespace QuasarLight
 
         private void BuildDeviceList()
         {
-            foreach (var d in _devices)
+            foreach (var d in _devices) AddDeviceRow(d);
+        }
+
+        private void AddDeviceRow(DeviceVm d)
+        {
             {
                 var dot = new System.Windows.Shapes.Ellipse { Width = 8, Height = 8, Fill = d.Dot, VerticalAlignment = VerticalAlignment.Center };
                 var text = new StackPanel { Margin = new Thickness(12, 0, 0, 0) };
@@ -156,6 +162,88 @@ namespace QuasarLight
             StageSub.Text = d.Subtitle;
             InfoText.Text = string.Join("\n", d.Info);
             LoadControls(d.Settings);
+            ShowView(d);
+        }
+
+        // ---------- device view (custom photo / generic devices) ----------
+        private static string FileKey(string id)
+        {
+            var sb = new System.Text.StringBuilder();
+            foreach (char ch in id) sb.Append(char.IsLetterOrDigit(ch) ? ch : '_');
+            return sb.ToString();
+        }
+
+        private static readonly string ImageDir =
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "QuasarLight", "images");
+
+        private void ShowView(DeviceVm d)
+        {
+            bool hasImg = !string.IsNullOrEmpty(d.ImagePath) && File.Exists(d.ImagePath);
+            bool custom = d.Generic || hasImg;
+            StageBox.Visibility = custom ? Visibility.Collapsed : Visibility.Visible;
+            DeviceView.Visibility = custom ? Visibility.Visible : Visibility.Collapsed;
+            ImgClearBtn.IsEnabled = hasImg;
+            if (!custom) return;
+
+            DevGlow.Fill = d.Ambient;
+            DevImage.Source = null;
+            if (hasImg)
+            {
+                try
+                {
+                    var bi = new System.Windows.Media.Imaging.BitmapImage();
+                    bi.BeginInit();
+                    bi.CacheOption = System.Windows.Media.Imaging.BitmapCacheOption.OnLoad;
+                    bi.DecodePixelWidth = 1400;
+                    bi.UriSource = new Uri(d.ImagePath);
+                    bi.EndInit();
+                    bi.Freeze();
+                    DevImage.Source = bi;
+                }
+                catch (Exception ex) { Debug.WriteLine("image load failed: " + ex.Message); }
+            }
+            DevNoImage.Visibility = DevImage.Source == null ? Visibility.Visible : Visibility.Collapsed;
+
+            LedBar.Children.Clear();
+            var z = d.Zones.OrderByDescending(q => q.Count).First();
+            int n = Math.Min(z.Count, 48);
+            double w = Math.Max(4, Math.Min(18, 560.0 / n));
+            for (int i = 0; i < n; i++)
+                LedBar.Children.Add(new System.Windows.Shapes.Rectangle { Width = w, Height = 10, RadiusX = 2, RadiusY = 2, Margin = new Thickness(1), Fill = z.Brushes[i] });
+        }
+
+        private void ImgSet_Click(object sender, RoutedEventArgs e)
+        {
+            if (_selected == null) return;
+            var dlg = new System.Windows.Forms.OpenFileDialog
+            {
+                Title = "Choose a photo of " + _selected.Subtitle,
+                Filter = "Images (png, jpg, bmp)|*.png;*.jpg;*.jpeg;*.bmp"
+            };
+            if (dlg.ShowDialog() != System.Windows.Forms.DialogResult.OK) return;
+            try
+            {
+                var fi = new FileInfo(dlg.FileName);
+                if (fi.Length > 20 * 1024 * 1024) { StatusText.Text = "Image is larger than 20 MB"; return; }
+                Directory.CreateDirectory(ImageDir);
+                string dest = Path.Combine(ImageDir, FileKey(_selected.Id) + fi.Extension.ToLowerInvariant());
+                File.Copy(fi.FullName, dest, true);  // keep our own copy so the original can move
+                _selected.ImagePath = dest;
+                _savedImages[_selected.Id] = dest;
+                _saveTimer.Stop(); _saveTimer.Start();
+                ShowView(_selected);
+            }
+            catch (Exception ex) { StatusText.Text = "Could not use image: " + ex.Message; }
+        }
+
+        private void ImgClear_Click(object sender, RoutedEventArgs e)
+        {
+            if (_selected == null || string.IsNullOrEmpty(_selected.ImagePath)) return;
+            try { if (File.Exists(_selected.ImagePath)) File.Delete(_selected.ImagePath); } catch (Exception ex) { Debug.WriteLine(ex.Message); }
+            _selected.ImagePath = "";
+            _savedImages.Remove(_selected.Id);
+            _saveTimer.Stop(); _saveTimer.Start();
+            ShowView(_selected);
         }
 
         private void LoadControls(EffectSettings s)
@@ -321,19 +409,47 @@ namespace QuasarLight
             return null;
         }
 
+        private void RemoveGenerics()
+        {
+            foreach (var g in _devices.Where(x => x.Generic).ToList())
+            {
+                if (g.Row != null) DeviceList.Children.Remove(g.Row);
+                _devices.Remove(g);
+            }
+        }
+
         private void OnConnected(int count)
         {
             OrgbDev[] hw = Native.OrgbDevices();
+            RemoveGenerics();
+            var used = new HashSet<int>();
             foreach (var d in _devices)
             {
+                d.OrgbIdx.Clear();
                 int type = d.Kind == "gpu" ? 2 : d.Kind == "ram" ? 1 : 0;
-                var m = hw.FirstOrDefault(h => h.Type == type);
-                d.OrgbIndex = m?.Index ?? -1;
-                d.HwName = m?.Name ?? "";
-                SetBadge(d, d.OrgbIndex >= 0);
+                // memory: every DIMM is its own OpenRGB device, drive them all; GPU/board: the first one
+                foreach (var h in hw.Where(h => h.Type == type && !used.Contains(h.Index)))
+                {
+                    d.OrgbIdx.Add(h.Index); used.Add(h.Index);
+                    d.HwName = h.Name;
+                    if (d.Kind != "ram") break;
+                }
+                SetBadge(d, d.Linked);
             }
-            int linked = _devices.Count(d => d.OrgbIndex >= 0);
-            SetBackendState(true, $"OpenRGB: connected - {linked} of {count} device(s) linked");
+            // anything else OpenRGB can drive gets a generic card, so every glowing device is controllable
+            var seen = new Dictionary<string, int>();
+            foreach (var h in hw.Where(h => !used.Contains(h.Index)))
+            {
+                seen.TryGetValue(h.Name, out int k); seen[h.Name] = k + 1;
+                var g = Scene.MakeGeneric(h, "hw:" + h.Name + (k > 0 ? "#" + k : ""));
+                if (_savedSettings.TryGetValue(g.Id, out var st)) g.Settings = st;
+                if (_savedImages.TryGetValue(g.Id, out var img)) g.ImagePath = img;
+                _devices.Add(g);
+                AddDeviceRow(g);
+                SetBadge(g, true);
+            }
+            int linked = _devices.Count(d => d.Linked);
+            SetBackendState(true, $"OpenRGB: connected - {linked} device(s) linked");
         }
 
         private void SetBadge(DeviceVm d, bool live)
@@ -348,7 +464,9 @@ namespace QuasarLight
         {
             _connectTimer?.Stop();
             Native.ql_orgb_disconnect();
-            foreach (var d in _devices) { d.OrgbIndex = -1; SetBadge(d, false); }
+            RemoveGenerics();
+            foreach (var d in _devices) { d.OrgbIdx.Clear(); SetBadge(d, false); }
+            if (_selected != null && !_devices.Contains(_selected) && _devices.Count > 0) _devices[0].Row!.IsChecked = true;
             SetBackendState(false, "OpenRGB: not connected");
         }
 
@@ -369,7 +487,7 @@ namespace QuasarLight
 
         private IEnumerable<DeviceVm> Targets() =>
             (SyncBox.IsChecked == true ? _devices : _selected != null ? new List<DeviceVm> { _selected } : new List<DeviceVm>())
-                .Where(d => d.OrgbIndex >= 0);
+                .Where(d => d.Linked);
 
         private void ApplyToHardware()
         {
@@ -378,9 +496,14 @@ namespace QuasarLight
             foreach (var d in Targets())
             {
                 var s = d.Settings;
-                int mode = Native.ql_orgb_apply(d.OrgbIndex, s.Type, (float)s.Speed, (float)s.Brightness, s.Color1, s.Color2, s.Reverse ? 1 : 0);
-                if (mode < 0) results.Add($"{d.Title}: failed - {Native.OrgbError()}");
-                else results.Add($"{d.Title}: {Native.EffectName(s.Type)}" + (Native.ql_orgb_last_approx() == 1 ? " (no such hardware effect, static colour used)" : ""));
+                bool failed = false, approx = false;
+                foreach (int idx in d.OrgbIdx)
+                {
+                    int mode = Native.ql_orgb_apply(idx, s.Type, (float)s.Speed, (float)s.Brightness, s.Color1, s.Color2, s.Reverse ? 1 : 0);
+                    if (mode < 0) { failed = true; results.Add($"{d.Title}: failed - {Native.OrgbError()}"); break; }
+                    approx |= Native.ql_orgb_last_approx() == 1;
+                }
+                if (!failed) results.Add($"{d.Title}: {Native.EffectName(s.Type)}" + (d.OrgbIdx.Count > 1 ? $" x{d.OrgbIdx.Count}" : "") + (approx ? " (no such hardware effect, static colour used)" : ""));
             }
             StatusText.Text = results.Count == 0 ? "No linked hardware devices to apply to" : "Applied - " + string.Join("  |  ", results);
         }
@@ -390,7 +513,7 @@ namespace QuasarLight
         private void Restore_Click(object sender, RoutedEventArgs e)
         {
             int n = 0;
-            foreach (var d in Targets()) if (Native.ql_orgb_restore(d.OrgbIndex) == 1) n++;
+            foreach (var d in Targets()) foreach (int idx in d.OrgbIdx) if (Native.ql_orgb_restore(idx) == 1) n++;
             StatusText.Text = n == 0 ? "Nothing to restore" : $"Restored {n} device(s) to their previous mode";
         }
 
@@ -413,6 +536,7 @@ namespace QuasarLight
             public bool AutoApply { get; set; }
             public string OpenRgbPath { get; set; } = "";
             public Dictionary<string, EffectSettings> Devices { get; set; } = new Dictionary<string, EffectSettings>();
+            public Dictionary<string, string> Images { get; set; } = new Dictionary<string, string>();
         }
 
         private void LoadSettings()
@@ -422,12 +546,18 @@ namespace QuasarLight
                 if (!File.Exists(SettingsPath)) return;
                 var st = JsonSerializer.Deserialize<SavedState>(File.ReadAllText(SettingsPath));
                 if (st == null) return;
-                foreach (var d in _devices)
-                    if (st.Devices.TryGetValue(d.Id, out var s) && s.Type >= 0 && s.Type < Native.ql_effect_count())
+                foreach (var kv in st.Devices)
+                    if (kv.Value.Type >= 0 && kv.Value.Type < Native.ql_effect_count())
                     {
-                        s.Speed = Math.Clamp(s.Speed, 0, 1); s.Brightness = Math.Clamp(s.Brightness, 0, 1);
-                        d.Settings = s;
+                        kv.Value.Speed = Math.Clamp(kv.Value.Speed, 0, 1); kv.Value.Brightness = Math.Clamp(kv.Value.Brightness, 0, 1);
+                        _savedSettings[kv.Key] = kv.Value;
                     }
+                foreach (var kv in st.Images) if (File.Exists(kv.Value)) _savedImages[kv.Key] = kv.Value;
+                foreach (var d in _devices)
+                {
+                    if (_savedSettings.TryGetValue(d.Id, out var s)) d.Settings = s;
+                    if (_savedImages.TryGetValue(d.Id, out var img)) d.ImagePath = img;
+                }
                 SyncBox.IsChecked = st.Sync;
                 AutoBox.IsChecked = st.AutoApply;
                 _openRgbPath = st.OpenRgbPath ?? "";
@@ -441,7 +571,9 @@ namespace QuasarLight
             {
                 Directory.CreateDirectory(Path.GetDirectoryName(SettingsPath)!);
                 var st = new SavedState { Sync = SyncBox.IsChecked == true, AutoApply = AutoBox.IsChecked == true, OpenRgbPath = _openRgbPath };
-                foreach (var d in _devices) st.Devices[d.Id] = d.Settings;
+                foreach (var kv in _savedSettings) st.Devices[kv.Key] = kv.Value;   // keep settings of devices not present right now
+                foreach (var d in _devices) { st.Devices[d.Id] = d.Settings; _savedSettings[d.Id] = d.Settings; }
+                foreach (var kv in _savedImages) st.Images[kv.Key] = kv.Value;
                 string tmp = SettingsPath + ".tmp";
                 File.WriteAllText(tmp, JsonSerializer.Serialize(st));
                 File.Move(tmp, SettingsPath, true);  // atomic replace: no half-written file on crash

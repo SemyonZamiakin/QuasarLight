@@ -51,7 +51,10 @@ namespace QuasarLight
         public Color Average = Colors.Black;
         public RadioButton? Row;
         public string[] Info = Array.Empty<string>();
-        public int OrgbIndex = -1;   // index in the OpenRGB server, -1 = preview only
+        public List<int> OrgbIdx = new List<int>();   // OpenRGB device indices (several DIMMs -> several indices)
+        public bool Linked => OrgbIdx.Count > 0;
+        public bool Generic;                           // device without a hand-drawn model (any other OpenRGB device)
+        public string ImagePath = "";
         public string HwName = "";
         public TextBlock? BadgeText;
         public Border? BadgeBox;
@@ -161,6 +164,27 @@ namespace QuasarLight
             // ---- sidebar order: GPU, RAM, Board ----
             devices = devices.OrderBy(d => d.Kind == "gpu" ? 0 : d.Kind == "ram" ? 1 : 2).ToList();
             return devices;
+        }
+
+        public static string TypeName(int t)
+        {
+            switch (t)
+            {
+                case 0: return "Motherboard"; case 1: return "Memory"; case 2: return "Graphics Card"; case 3: return "Cooler";
+                case 4: return "LED Strip"; case 5: return "Keyboard"; case 6: return "Mouse"; case 7: return "Mousepad";
+                case 8: return "Headset"; case 9: return "Headset Stand"; case 10: return "Gamepad"; case 11: return "Light";
+                case 12: return "Speaker"; case 13: return "Virtual"; case 14: return "Storage"; case 15: return "Case";
+                case 16: return "Microphone"; default: return "Device";
+            }
+        }
+
+        public static DeviceVm MakeGeneric(OrgbDev hw, string id)
+        {
+            var d = new DeviceVm { Id = id, Kind = "generic", Generic = true, Title = TypeName(hw.Type), Subtitle = hw.Name };
+            d.OrgbIdx.Add(hw.Index);
+            d.Zones.Add(new Zone(Math.Max(1, Math.Min(hw.Leds, 48))));
+            d.Info = new[] { "Device: " + hw.Name, $"Vendor: {hw.Vendor}  |  LEDs: {hw.Leds}", "Hardware modes: " + string.Join(", ", hw.Modes) };
+            return d;
         }
 
         private static string Shorten(string s, int n) => s.Length <= n ? s : s.Substring(0, n - 1) + "…";
