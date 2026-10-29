@@ -27,6 +27,11 @@ namespace QuasarLight
         private readonly Stopwatch _clock = Stopwatch.StartNew();
         private double _last;
         private readonly DispatcherTimer _saveTimer;
+        private readonly DispatcherTimer _applyTimer;
+        private DispatcherTimer? _connectTimer;
+        private bool _connected;
+        private string _openRgbPath = "";
+        private const int OrgbPort = 6742;
         private static readonly string SettingsPath =
             Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "QuasarLight", "settings.json");
 
@@ -35,6 +40,8 @@ namespace QuasarLight
             InitializeComponent();
             _saveTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(600) };
             _saveTimer.Tick += (_, __) => { _saveTimer.Stop(); SaveSettings(); };
+            _applyTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(350) };
+            _applyTimer.Tick += (_, __) => { _applyTimer.Stop(); ApplyToHardware(); };
 
             BuildEffectChips();
             BuildPalette();
@@ -47,6 +54,7 @@ namespace QuasarLight
             LoadSettings();
             BuildDeviceList();
             if (_devices.Count > 0) _devices[0].Row!.IsChecked = true;
+            TryConnect(quiet: true);  // attach to an already-running OpenRGB server; never launches anything
 
             CompositionTarget.Rendering += OnRender;
             SizeChanged += (_, __) => UpdateHueThumb();
@@ -125,6 +133,8 @@ namespace QuasarLight
                     Background = (Brush)FindResource("RaisedBg"), BorderBrush = (Brush)FindResource("Line"), BorderThickness = new Thickness(1),
                     Child = new TextBlock { Text = "PREVIEW", FontSize = 9, FontWeight = FontWeights.SemiBold, Foreground = (Brush)FindResource("DimBrush") }
                 };
+                d.BadgeBox = badge;
+                d.BadgeText = (TextBlock)badge.Child;
                 var row = new DockPanel();
                 DockPanel.SetDock(badge, Dock.Right);
                 row.Children.Add(badge);
@@ -172,6 +182,7 @@ namespace QuasarLight
             if (SyncBox.IsChecked == true) foreach (var d in _devices) change(d.Settings);
             else change(_selected.Settings);
             _saveTimer.Stop(); _saveTimer.Start();
+            if (_connected && AutoBox.IsChecked == true) { _applyTimer.Stop(); _applyTimer.Start(); }
         }
 
         private void SetTargetColor(uint rgb)
@@ -240,10 +251,167 @@ namespace QuasarLight
             _saveTimer.Stop(); _saveTimer.Start();
         }
 
+        // ---------- OpenRGB backend ----------
+        private static readonly string[] DefaultOrgbLocations =
+        {
+            @"OpenRGB\OpenRGB.exe", @"OpenRGB Windows 64-bit\OpenRGB.exe", @"tools\OpenRGB\OpenRGB.exe"
+        };
+
+        private void Backend_Click(object sender, RoutedEventArgs e)
+        {
+            if (_connected) { Disconnect(); return; }
+            if (TryConnect(quiet: false)) return;
+            LaunchOpenRgb();
+        }
+
+        private bool TryConnect(bool quiet)
+        {
+            int n;
+            try { n = Native.ql_orgb_connect(OrgbPort); }
+            catch (Exception ex) { SetBackendState(false, "OpenRGB: error - " + ex.Message); return false; }
+            if (n < 0)
+            {
+                if (!quiet) SetBackendState(false, "OpenRGB: not running");
+                return false;
+            }
+            OnConnected(n);
+            return true;
+        }
+
+        private void LaunchOpenRgb()
+        {
+            string? exe = FindOpenRgb();
+            if (exe == null)
+            {
+                var dlg = new System.Windows.Forms.OpenFileDialog { Title = "Locate OpenRGB.exe (from the official OpenRGB release)", Filter = "OpenRGB.exe|OpenRGB.exe" };
+                if (dlg.ShowDialog() != System.Windows.Forms.DialogResult.OK) { SetBackendState(false, "OpenRGB: not running"); return; }
+                exe = dlg.FileName;
+            }
+            _openRgbPath = exe;
+            SaveSettings();
+            try
+            {
+                Process.Start(new ProcessStartInfo(exe, "--server --startminimized --noautoconnect")
+                    { WorkingDirectory = Path.GetDirectoryName(exe)!, UseShellExecute = false });
+            }
+            catch (Exception ex) { SetBackendState(false, "OpenRGB: cannot start - " + ex.Message); return; }
+
+            int tries = 0;
+            SetBackendState(false, "OpenRGB: starting...");
+            _connectTimer?.Stop();
+            _connectTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(2) };
+            _connectTimer.Tick += (_, __) =>
+            {
+                if (TryConnect(quiet: true)) { _connectTimer!.Stop(); return; }
+                if (++tries >= 30) { _connectTimer!.Stop(); SetBackendState(false, "OpenRGB: did not respond"); }
+                else BackendText.Text = $"OpenRGB: starting... ({tries * 2}s)";
+            };
+            _connectTimer.Start();
+        }
+
+        private string? FindOpenRgb()
+        {
+            if (File.Exists(_openRgbPath)) return _openRgbPath;
+            string baseDir = AppContext.BaseDirectory;
+            foreach (var rel in DefaultOrgbLocations)
+            {
+                string p = Path.Combine(baseDir, rel);
+                if (File.Exists(p)) return p;
+            }
+            return null;
+        }
+
+        private void OnConnected(int count)
+        {
+            OrgbDev[] hw = Native.OrgbDevices();
+            foreach (var d in _devices)
+            {
+                int type = d.Kind == "gpu" ? 2 : d.Kind == "ram" ? 1 : 0;
+                var m = hw.FirstOrDefault(h => h.Type == type);
+                d.OrgbIndex = m?.Index ?? -1;
+                d.HwName = m?.Name ?? "";
+                SetBadge(d, d.OrgbIndex >= 0);
+            }
+            int linked = _devices.Count(d => d.OrgbIndex >= 0);
+            SetBackendState(true, $"OpenRGB: connected - {linked} of {count} device(s) linked");
+        }
+
+        private void SetBadge(DeviceVm d, bool live)
+        {
+            if (d.BadgeText == null || d.BadgeBox == null) return;
+            d.BadgeText.Text = live ? "LIVE" : "PREVIEW";
+            d.BadgeText.Foreground = live ? new SolidColorBrush(Color.FromRgb(0x5F, 0xD1, 0x8A)) : (Brush)FindResource("DimBrush");
+            d.BadgeBox.BorderBrush = live ? new SolidColorBrush(Color.FromRgb(0x2F, 0x7A, 0x4E)) : (Brush)FindResource("Line");
+        }
+
+        private void Disconnect()
+        {
+            _connectTimer?.Stop();
+            Native.ql_orgb_disconnect();
+            foreach (var d in _devices) { d.OrgbIndex = -1; SetBadge(d, false); }
+            SetBackendState(false, "OpenRGB: not connected");
+        }
+
+        private void SetBackendState(bool ok, string text)
+        {
+            _connected = ok;
+            BackendText.Text = text;
+            BackendDot.Fill = ok ? new SolidColorBrush(Color.FromRgb(0x5F, 0xD1, 0x8A)) : (Brush)FindResource("WarnBrush");
+            BackendBtn.Content = ok ? "Disconnect" : "Connect OpenRGB";
+            ApplyBtn.IsEnabled = RestoreBtn.IsEnabled = AutoBox.IsEnabled = ok;
+            ApplyBtn.ToolTip = ok ? "Send the current effect to the linked devices" : "Connect OpenRGB first";
+            ModeNote.Text = ok
+                ? "Changes are sent to linked devices when you press Apply (or automatically if enabled)."
+                : "Hardware is controlled through a local OpenRGB server. Until connected, changes affect the preview only.";
+            if (_selected != null)
+                StatusText.Text = $"{_devices.Count} devices  -  selected: {_selected.Title}  -  backend: " + (ok ? "OpenRGB" : "none (preview)");
+        }
+
+        private IEnumerable<DeviceVm> Targets() =>
+            (SyncBox.IsChecked == true ? _devices : _selected != null ? new List<DeviceVm> { _selected } : new List<DeviceVm>())
+                .Where(d => d.OrgbIndex >= 0);
+
+        private void ApplyToHardware()
+        {
+            if (!_connected) return;
+            var results = new List<string>();
+            foreach (var d in Targets())
+            {
+                var s = d.Settings;
+                int mode = Native.ql_orgb_apply(d.OrgbIndex, s.Type, (float)s.Speed, (float)s.Brightness, s.Color1, s.Color2, s.Reverse ? 1 : 0);
+                if (mode < 0) results.Add($"{d.Title}: failed - {Native.OrgbError()}");
+                else results.Add($"{d.Title}: {Native.EffectName(s.Type)}" + (Native.ql_orgb_last_approx() == 1 ? " (no such hardware effect, static colour used)" : ""));
+            }
+            StatusText.Text = results.Count == 0 ? "No linked hardware devices to apply to" : "Applied - " + string.Join("  |  ", results);
+        }
+
+        private void Apply_Click(object sender, RoutedEventArgs e) => ApplyToHardware();
+
+        private void Restore_Click(object sender, RoutedEventArgs e)
+        {
+            int n = 0;
+            foreach (var d in Targets()) if (Native.ql_orgb_restore(d.OrgbIndex) == 1) n++;
+            StatusText.Text = n == 0 ? "Nothing to restore" : $"Restored {n} device(s) to their previous mode";
+        }
+
+        private void Auto_Click(object sender, RoutedEventArgs e)
+        {
+            if (AutoBox.IsChecked == true) ApplyToHardware();
+            _saveTimer.Stop(); _saveTimer.Start();
+        }
+
+        public void Shutdown()
+        {
+            _connectTimer?.Stop();
+            Native.ql_orgb_disconnect();
+        }
+
         // ---------- persistence (%APPDATA%\QuasarLight\settings.json) ----------
         private sealed class SavedState
         {
             public bool Sync { get; set; } = true;
+            public bool AutoApply { get; set; }
+            public string OpenRgbPath { get; set; } = "";
             public Dictionary<string, EffectSettings> Devices { get; set; } = new Dictionary<string, EffectSettings>();
         }
 
@@ -261,6 +429,8 @@ namespace QuasarLight
                         d.Settings = s;
                     }
                 SyncBox.IsChecked = st.Sync;
+                AutoBox.IsChecked = st.AutoApply;
+                _openRgbPath = st.OpenRgbPath ?? "";
             }
             catch (Exception ex) { Debug.WriteLine("settings load failed: " + ex.Message); }  // corrupt file -> defaults
         }
@@ -270,7 +440,7 @@ namespace QuasarLight
             try
             {
                 Directory.CreateDirectory(Path.GetDirectoryName(SettingsPath)!);
-                var st = new SavedState { Sync = SyncBox.IsChecked == true };
+                var st = new SavedState { Sync = SyncBox.IsChecked == true, AutoApply = AutoBox.IsChecked == true, OpenRgbPath = _openRgbPath };
                 foreach (var d in _devices) st.Devices[d.Id] = d.Settings;
                 string tmp = SettingsPath + ".tmp";
                 File.WriteAllText(tmp, JsonSerializer.Serialize(st));

@@ -29,9 +29,12 @@
 
 ## Preview vs. hardware
 
-The preview/effect pipeline is complete and tested. **Hardware output is not implemented**: it needs
-(1) a signed user-mode-accessible SMBus/I²C driver on Windows (e.g. PawnIO-class), and
-(2) per-vendor plugins verified on real devices. Until a plugin identifies a device, the UI says "Preview mode".
+The preview/effect pipeline is complete and tested. Hardware output goes through the **OpenRGB backend**
+(`core/src/openrgb.cpp`): a TCP client for the OpenRGB SDK server on loopback (protocol 3). OpenRGB owns the
+drivers and per-vendor protocols; Quasar Light owns the UI, effects and settings. Device matching is by OpenRGB
+device type (GPU / DRAM / motherboard). Without a running server the UI stays in preview mode.
+
+Native drivers (own SMBus transport + plugins behind `GuardedBus`) remain an option for devices OpenRGB cannot reach.
 
 ## Repository layout
 

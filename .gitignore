@@ -3,3 +3,5 @@ ui/**/obj/
 ui/QuasarLight.App/native/
 core/tests/*.exe
 *.exe
+tools/
+core/tests/*.exe

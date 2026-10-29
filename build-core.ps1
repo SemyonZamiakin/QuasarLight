@@ -7,9 +7,9 @@ $root = $PSScriptRoot
 $out = Join-Path $root 'ui\QuasarLight.App\native'
 New-Item -ItemType Directory -Force $out | Out-Null
 $src = Get-ChildItem "$root\core\src\*.cpp" | ForEach-Object FullName
-& $gpp -std=c++17 -O2 -Wall -Wextra -shared -static -I"$root\core\include" $src -o "$out\qlcore.dll"
+& $gpp -std=c++17 -O2 -Wall -Wextra -shared -static -I"$root\core\include" $src -o "$out\qlcore.dll" -lws2_32
 if ($LASTEXITCODE) { throw 'dll build failed' }
-& $gpp -std=c++17 -O2 -Wall -Wextra -static -I"$root\core\include" "$root\core\tests\test_core.cpp" $src -o "$root\core\tests\test_core.exe"
+& $gpp -std=c++17 -O2 -Wall -Wextra -static -I"$root\core\include" "$root\core\tests\test_core.cpp" $src -o "$root\core\tests\test_core.exe" -lws2_32
 if ($LASTEXITCODE) { throw 'test build failed' }
 & "$root\core\tests\test_core.exe"
 if ($LASTEXITCODE) { throw 'tests failed' }

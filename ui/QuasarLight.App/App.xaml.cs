@@ -65,6 +65,7 @@ namespace QuasarLight
         private void ExitApp()
         {
             _win?.SaveSettings();
+            _win?.Shutdown();
             if (_tray != null) { _tray.Visible = false; _tray.Dispose(); }
             Shutdown();
         }

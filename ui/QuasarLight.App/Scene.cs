@@ -51,6 +51,10 @@ namespace QuasarLight
         public Color Average = Colors.Black;
         public RadioButton? Row;
         public string[] Info = Array.Empty<string>();
+        public int OrgbIndex = -1;   // index in the OpenRGB server, -1 = preview only
+        public string HwName = "";
+        public TextBlock? BadgeText;
+        public Border? BadgeBox;
     }
 
     internal static class Scene

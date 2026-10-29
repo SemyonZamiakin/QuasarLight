@@ -1,5 +1,6 @@
 #include "ql/qlcore.h"
 #include "ql/effects.h"
+#include "ql/openrgb.h"
 #include "ql/sysinfo.h"
 #include <cstdio>
 #include <string>
@@ -79,5 +80,54 @@ void ql_render(int type, float speed, float brightness, uint32_t c1, uint32_t c2
         rgb[3 * i + 2] = px[size_t(i)].b;
     }
 }
+
+// ---------------- OpenRGB backend ----------------
+namespace {
+ql::OpenRgbClient g_orgb;
+bool g_approx = false;
+std::string g_orgbJson, g_orgbErr;
+}  // namespace
+
+int ql_orgb_connect(int port) {
+    if (port <= 0 || port > 65535) { g_orgbErr = "bad port"; return -1; }
+    if (!g_orgb.connect("127.0.0.1", uint16_t(port))) { g_orgbErr = g_orgb.lastError(); return -1; }
+    return int(g_orgb.devices().size());
+}
+
+void ql_orgb_disconnect(void) { g_orgb.disconnect(); }
+
+const char* ql_orgb_devices_json(void) {
+    std::string o = "[";
+    const auto& ds = g_orgb.devices();
+    for (size_t i = 0; i < ds.size(); ++i) {
+        if (i) o += ',';
+        o += "{\"index\":" + std::to_string(i) + ",\"name\":"; esc(o, ds[i].name);
+        o += ",\"vendor\":"; esc(o, ds[i].vendor);
+        o += ",\"type\":" + std::to_string(ds[i].type) + ",\"leds\":" + std::to_string(ds[i].ledCount) + ",\"modes\":[";
+        for (size_t m = 0; m < ds[i].modes.size(); ++m) { if (m) o += ','; esc(o, ds[i].modes[m].name); }
+        o += "]}";
+    }
+    o += "]";
+    g_orgbJson = o;
+    return g_orgbJson.c_str();
+}
+
+int ql_orgb_apply(int dev, int effect, float speed, float brightness, uint32_t c1, uint32_t c2, int reverse) {
+    if (dev < 0 || effect < 0 || effect >= int(ql::EffectType::Count)) return -1;
+    ql::EffectParams p;
+    p.type = ql::EffectType(effect);
+    p.speed = speed;
+    p.brightness = brightness;
+    p.color1 = unpack(c1);
+    p.color2 = unpack(c2);
+    p.reverse = reverse != 0;
+    const int r = g_orgb.apply(size_t(dev), p, &g_approx);
+    if (r < 0) g_orgbErr = g_orgb.lastError();
+    return r;
+}
+
+int ql_orgb_last_approx(void) { return g_approx ? 1 : 0; }
+int ql_orgb_restore(int dev) { return dev >= 0 && g_orgb.restore(size_t(dev)) ? 1 : 0; }
+const char* ql_orgb_error(void) { return g_orgbErr.c_str(); }
 
 }  // extern "C"

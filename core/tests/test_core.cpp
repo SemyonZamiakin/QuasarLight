@@ -1,5 +1,6 @@
 #include "ql/effects.h"
 #include "ql/guard.h"
+#include "ql/openrgb.h"
 #include "ql/qlcore.h"
 #include "ql/sysinfo.h"
 #include <cstdio>
@@ -114,11 +115,51 @@ static void test_capi() {
     printf("detected: %s\n", j);
 }
 
+static void put32(std::vector<uint8_t>& v, uint32_t x) { for (int i = 0; i < 4; ++i) v.push_back(uint8_t(x >> (8 * i))); }
+static void put16(std::vector<uint8_t>& v, uint16_t x) { v.push_back(uint8_t(x)); v.push_back(uint8_t(x >> 8)); }
+static void putStr(std::vector<uint8_t>& v, const char* s) { put16(v, uint16_t(strlen(s) + 1)); v.insert(v.end(), s, s + strlen(s) + 1); }
+
+static void test_openrgb() {
+    // Build a protocol-3 device payload by hand and parse it back.
+    ql::OrgbMode direct; direct.name = "Direct"; direct.flags = 0x130; direct.colorMode = 1; direct.brightMax = 100; direct.brightness = 99;
+    ql::OrgbMode breath = direct; breath.name = "Breathing"; breath.flags = 0x131; breath.speedMax = 10; breath.speed = 5;
+    std::vector<uint8_t> d;
+    put32(d, 0);               // total size (ignored by parser)
+    put32(d, 2);               // GPU
+    putStr(d, "Test GPU"); putStr(d, "Acme"); putStr(d, "desc"); putStr(d, "v1"); putStr(d, "sn"); putStr(d, "loc");
+    put16(d, 2); put32(d, 0);  // 2 modes, active 0
+    for (const auto* m : {&direct, &breath}) { auto b = ql::serializeOrgbMode(*m, 3); d.insert(d.end(), b.begin(), b.end()); }
+    put16(d, 1);               // 1 zone
+    putStr(d, "Zone"); put32(d, 1); put32(d, 1); put32(d, 1); put32(d, 1); put16(d, 0);
+    put16(d, 1); putStr(d, "LED 0"); put32(d, 0);
+    put16(d, 1); put32(d, 0);  // 1 colour
+    ql::OrgbDevice dev;
+    CHECK(ql::parseOrgbDevice(d.data(), d.size(), dev, 3));
+    CHECK(dev.name == "Test GPU" && dev.vendor == "Acme" && dev.type == 2);
+    CHECK(dev.modes.size() == 2 && dev.modes[1].name == "Breathing" && dev.modes[1].speed == 5);
+    CHECK(dev.ledCount == 1);
+
+    // every truncation must fail cleanly, never read out of bounds
+    for (size_t cut = 0; cut < d.size(); ++cut) { ql::OrgbDevice t; ql::parseOrgbDevice(d.data(), cut, t, 3); }
+    CHECK(!ql::parseOrgbDevice(d.data(), d.size() - 3, dev, 3));
+
+    bool approx = true;
+    CHECK(ql::chooseOrgbMode(dev, ql::EffectType::Breathing, approx) == 1 && !approx);
+    CHECK(ql::chooseOrgbMode(dev, ql::EffectType::Static, approx) == 0 && !approx);
+    CHECK(ql::chooseOrgbMode(dev, ql::EffectType::Comet, approx) == 0 && approx);  // no comet: static stand-in
+
+    ql::OpenRgbClient c;
+    CHECK(!c.connect("127.0.0.1", 1, 300));  // nothing listens on port 1
+    CHECK(!c.connected() && !c.lastError().empty());
+    CHECK(ql_orgb_connect(0) == -1);
+}
+
 int main() {
     test_guard();
     test_effects();
     test_smbios();
     test_capi();
+    test_openrgb();
     printf("%d checks, %d failed\n", g_run, g_fail);
     return g_fail ? 1 : 0;
 }

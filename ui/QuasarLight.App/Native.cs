@@ -17,6 +17,22 @@ namespace QuasarLight
         public static extern unsafe void ql_render(int type, float speed, float brightness, uint c1, uint c2,
                                                     int reverse, double t, byte* rgb, int n);
 
+        [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)] public static extern int ql_orgb_connect(int port);
+        [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)] public static extern void ql_orgb_disconnect();
+        [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)] private static extern IntPtr ql_orgb_devices_json();
+        [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)]
+        public static extern int ql_orgb_apply(int dev, int effect, float speed, float brightness, uint c1, uint c2, int reverse);
+        [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)] public static extern int ql_orgb_last_approx();
+        [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)] public static extern int ql_orgb_restore(int dev);
+        [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)] private static extern IntPtr ql_orgb_error();
+
+        public static string OrgbError() => Marshal.PtrToStringUTF8(ql_orgb_error()) ?? "";
+        public static OrgbDev[] OrgbDevices()
+        {
+            string json = Marshal.PtrToStringUTF8(ql_orgb_devices_json()) ?? "[]";
+            return JsonSerializer.Deserialize<OrgbDev[]>(json, new JsonSerializerOptions { PropertyNameCaseInsensitive = true }) ?? Array.Empty<OrgbDev>();
+        }
+
         public const int AbiVersion = 1;
 
         public static string EffectName(int t) => Marshal.PtrToStringUTF8(ql_effect_name(t)) ?? "?";
@@ -27,6 +43,16 @@ namespace QuasarLight
             return JsonSerializer.Deserialize<SystemModel>(json, new JsonSerializerOptions { PropertyNameCaseInsensitive = true })
                    ?? new SystemModel();
         }
+    }
+
+    internal sealed class OrgbDev
+    {
+        public int Index { get; set; }
+        public string Name { get; set; } = "";
+        public string Vendor { get; set; } = "";
+        public int Type { get; set; }
+        public int Leds { get; set; }
+        public string[] Modes { get; set; } = Array.Empty<string>();
     }
 
     internal sealed class SystemModel
