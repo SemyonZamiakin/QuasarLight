@@ -52,6 +52,8 @@
                                 <TextBlock x:Name="ModeNote" TextWrapping="Wrap" Margin="0,6,0,10" FontSize="11" Foreground="{StaticResource MutedBrush}"
                                            Text="Hardware is controlled through a local OpenRGB server. Until connected, changes affect the preview only."/>
                                 <Button x:Name="BackendBtn" Content="Connect OpenRGB" Height="28" Click="Backend_Click"/>
+                                <Button x:Name="PawnBtn" Style="{StaticResource GhostBtn}" Content="Get PawnIO driver (memory / board)" Margin="0,6,0,0"
+                                        Visibility="Collapsed" Click="Pawn_Click" ToolTip="Opens pawnio.eu in your browser"/>
                             </StackPanel>
                         </Border>
                         <StackPanel>

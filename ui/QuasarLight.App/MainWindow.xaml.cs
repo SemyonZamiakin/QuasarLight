@@ -4,6 +4,8 @@ using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Text.Json;
+using System.Threading;
+using Microsoft.Win32;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
@@ -366,14 +368,38 @@ namespace QuasarLight
             return true;
         }
 
-        private void LaunchOpenRgb()
+        private async void LaunchOpenRgb()
         {
             string? exe = FindOpenRgb();
             if (exe == null)
             {
-                var dlg = new System.Windows.Forms.OpenFileDialog { Title = "Locate OpenRGB.exe (from the official OpenRGB release)", Filter = "OpenRGB.exe|OpenRGB.exe" };
-                if (dlg.ShowDialog() != System.Windows.Forms.DialogResult.OK) { SetBackendState(false, "OpenRGB: not running"); return; }
-                exe = dlg.FileName;
+                var ask = System.Windows.MessageBox.Show(this,
+                    $"OpenRGB was not found.\n\nDownload OpenRGB {OpenRgbInstaller.Version} (about 22 MB) from the official repository\n" +
+                    "codeberg.org/OpenRGB/OpenRGB and verify its SHA-256 checksum?\n\nOpenRGB is a separate GPL-2.0 program that does the actual hardware access.",
+                    "Quasar Light - OpenRGB", MessageBoxButton.YesNoCancel, MessageBoxImage.Question);
+                if (ask == MessageBoxResult.Cancel) { SetBackendState(false, "OpenRGB: not running"); return; }
+                if (ask == MessageBoxResult.Yes)
+                {
+                    BackendBtn.IsEnabled = false;
+                    try
+                    {
+                        var progress = new Progress<int>(p => BackendText.Text = $"Downloading OpenRGB... {p}%");
+                        exe = await OpenRgbInstaller.DownloadAsync(progress, CancellationToken.None);
+                    }
+                    catch (Exception ex)
+                    {
+                        SetBackendState(false, "OpenRGB download failed: " + ex.Message);
+                        BackendBtn.IsEnabled = true;
+                        return;
+                    }
+                    BackendBtn.IsEnabled = true;
+                }
+                else
+                {
+                    var dlg = new System.Windows.Forms.OpenFileDialog { Title = "Locate OpenRGB.exe", Filter = "OpenRGB.exe|OpenRGB.exe" };
+                    if (dlg.ShowDialog() != System.Windows.Forms.DialogResult.OK) { SetBackendState(false, "OpenRGB: not running"); return; }
+                    exe = dlg.FileName;
+                }
             }
             _openRgbPath = exe;
             SaveSettings();
@@ -391,7 +417,7 @@ namespace QuasarLight
             _connectTimer.Tick += (_, __) =>
             {
                 if (TryConnect(quiet: true)) { _connectTimer!.Stop(); return; }
-                if (++tries >= 30) { _connectTimer!.Stop(); SetBackendState(false, "OpenRGB: did not respond"); }
+                if (++tries >= 40) { _connectTimer!.Stop(); SetBackendState(false, "OpenRGB: did not respond"); }
                 else BackendText.Text = $"OpenRGB: starting... ({tries * 2}s)";
             };
             _connectTimer.Start();
@@ -399,7 +425,9 @@ namespace QuasarLight
 
         private string? FindOpenRgb()
         {
-            if (File.Exists(_openRgbPath)) return _openRgbPath;
+            if (!string.IsNullOrEmpty(_openRgbPath) && File.Exists(_openRgbPath)) return _openRgbPath;
+            string? own = OpenRgbInstaller.InstalledExe();
+            if (own != null) return own;
             string baseDir = AppContext.BaseDirectory;
             foreach (var rel in DefaultOrgbLocations)
             {
@@ -452,6 +480,27 @@ namespace QuasarLight
             SetBackendState(true, $"OpenRGB: connected - {linked} device(s) linked");
         }
 
+        private static bool PawnIoInstalled()
+        {
+            try { using var k = Registry.LocalMachine.OpenSubKey(@"SYSTEM\CurrentControlSet\Services\PawnIO"); return k != null; }
+            catch { return false; }
+        }
+
+        private static readonly string[] BusHolders = { "Mystic_Light_Service", "MSI_Central_Service", "MSI.CentralServer", "LightingService", "AacAmbientLighting" };
+
+        /// <summary>Plain-language explanation of why memory / board may be missing.</summary>
+        private string Hints()
+        {
+            var h = new List<string>();
+            bool pawn = PawnIoInstalled();
+            PawnBtn.Visibility = pawn ? Visibility.Collapsed : Visibility.Visible;
+            if (!pawn) h.Add("Memory and motherboard need the PawnIO driver (button below).");
+            else if (!App.IsElevated) h.Add("Not running as administrator: memory and motherboard are unavailable. Restart the app and accept the UAC prompt.");
+            var holders = BusHolders.Where(n => Process.GetProcessesByName(n).Length > 0).ToList();
+            if (holders.Count > 0) h.Add("Close/stop " + string.Join(", ", holders) + " - they lock the memory/board bus.");
+            return string.Join("\n", h);
+        }
+
         private void SetBadge(DeviceVm d, bool live)
         {
             if (d.BadgeText == null || d.BadgeBox == null) return;
@@ -478,9 +527,11 @@ namespace QuasarLight
             BackendBtn.Content = ok ? "Disconnect" : "Connect OpenRGB";
             ApplyBtn.IsEnabled = RestoreBtn.IsEnabled = AutoBox.IsEnabled = ok;
             ApplyBtn.ToolTip = ok ? "Send the current effect to the linked devices" : "Connect OpenRGB first";
-            ModeNote.Text = ok
+            string hints = Hints();
+            ModeNote.Text = (ok
                 ? "Changes are sent to linked devices when you press Apply (or automatically if enabled)."
-                : "Hardware is controlled through a local OpenRGB server. Until connected, changes affect the preview only.";
+                : "Hardware is controlled through a local OpenRGB server. Until connected, changes affect the preview only.")
+                + (hints.Length > 0 ? "\n\n" + hints : "");
             if (_selected != null)
                 StatusText.Text = $"{_devices.Count} devices  -  selected: {_selected.Title}  -  backend: " + (ok ? "OpenRGB" : "none (preview)");
         }
@@ -506,6 +557,12 @@ namespace QuasarLight
                 if (!failed) results.Add($"{d.Title}: {Native.EffectName(s.Type)}" + (d.OrgbIdx.Count > 1 ? $" x{d.OrgbIdx.Count}" : "") + (approx ? " (no such hardware effect, static colour used)" : ""));
             }
             StatusText.Text = results.Count == 0 ? "No linked hardware devices to apply to" : "Applied - " + string.Join("  |  ", results);
+        }
+
+        private void Pawn_Click(object sender, RoutedEventArgs e)
+        {
+            try { Process.Start(new ProcessStartInfo("https://pawnio.eu") { UseShellExecute = true }); }
+            catch (Exception ex) { StatusText.Text = "Could not open browser: " + ex.Message; }
         }
 
         private void Apply_Click(object sender, RoutedEventArgs e) => ApplyToHardware();

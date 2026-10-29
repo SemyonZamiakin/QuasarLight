@@ -18,7 +18,7 @@
 
   <ItemGroup>
     <!-- native core built by build-core.ps1 -->
-    <None Include="native\qlcore.dll" CopyToOutputDirectory="PreserveNewest" Link="qlcore.dll" />
+    <None Include="native\qlcore.dll" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" Link="qlcore.dll" />
   </ItemGroup>
 
 </Project>

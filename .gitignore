@@ -5,3 +5,5 @@ core/tests/*.exe
 *.exe
 tools/
 core/tests/*.exe
+dist/
+build/

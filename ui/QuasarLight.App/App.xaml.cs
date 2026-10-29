@@ -1,4 +1,7 @@
 using System;
+using System.ComponentModel;
+using System.Diagnostics;
+using System.Security.Principal;
 using System.Drawing;
 using System.Threading;
 using System.Windows;
@@ -8,6 +11,9 @@ namespace QuasarLight
 {
     public partial class App : System.Windows.Application
     {
+        /// <summary>Memory and motherboard control need admin rights (PawnIO refuses non-elevated callers).</summary>
+        public static bool IsElevated { get; private set; }
+
         private Mutex? _single;
         private Forms.NotifyIcon? _tray;
         private MainWindow? _win;
@@ -15,6 +21,18 @@ namespace QuasarLight
         protected override void OnStartup(StartupEventArgs e)
         {
             base.OnStartup(e);
+            using (var id = WindowsIdentity.GetCurrent()) IsElevated = new WindowsPrincipal(id).IsInRole(WindowsBuiltInRole.Administrator);
+            if (!IsElevated && Array.IndexOf(e.Args, "--no-elevate") < 0)
+            {
+                try
+                {
+                    Process.Start(new ProcessStartInfo(Environment.ProcessPath!, string.Join(" ", e.Args))
+                        { UseShellExecute = true, Verb = "runas" });
+                    Shutdown();
+                    return;  // the elevated copy takes over
+                }
+                catch (Win32Exception) { /* UAC declined: continue without admin (GPU + preview still work) */ }
+            }
             _single = new Mutex(true, "QuasarLight.SingleInstance", out bool first);
             if (!first) { Shutdown(); return; }
 

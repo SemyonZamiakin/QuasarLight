@@ -25,17 +25,34 @@ One lightweight, open-source place to see and control everything on your PC that
 | Motherboard (MSI Z390) and RAM | **not controllable here**: OpenRGB needs the PawnIO driver for the SMBus/SuperIO; not installed. KHX3000C15 RAM may have no RGB at all |
 | Other USB devices (Logitech, JBL, …) | seen by OpenRGB's HID layer but not registered as RGB devices; not shown in the UI yet |
 
-## Build (Windows x64)
+## Install (for users)
+
+1. Download `QuasarLight-<version>-win-x64.zip` from the Releases page and unzip anywhere. No .NET install is needed.
+2. Run `QuasarLight.exe` and accept the Windows UAC prompt (administrator rights are needed for memory and motherboard).
+3. Press **Connect OpenRGB**. If OpenRGB is missing, Quasar Light offers to download the official release
+   (SHA-256 verified) and starts it for you.
+4. For **memory and motherboard** install the PawnIO driver from [pawnio.eu](https://pawnio.eu) (a button in the app opens it),
+   and close MSI Center / Mystic Light / other RGB software, which lock the same bus.
+5. Pick an effect and press **Apply to hardware**.
+
+Graphics cards and USB devices work without PawnIO and without administrator rights.
+
+## Build from source (Windows x64)
 
 Requires MSYS2 mingw64 `g++` and .NET SDK 10.
 
 ```powershell
-./build-core.ps1                      # builds qlcore.dll, runs core tests
-cd ui/QuasarLight.App
-dotnet build -c Release -p:Platform=x64
+./package.ps1        # builds the core, runs its tests, publishes dist/QuasarLight-<version>-win-x64.zip
 ```
 
-To use hardware control: download OpenRGB from its [official releases](https://codeberg.org/OpenRGB/OpenRGB/releases), run Quasar Light and press **Connect OpenRGB** (it starts the server, or asks where `OpenRGB.exe` is once).
+or for development:
+
+```powershell
+./build-core.ps1
+cd ui/QuasarLight.App
+dotnet build -c Release -p:Platform=x64
+./bin/x64/Release/net10.0-windows/QuasarLight.exe --no-elevate   # skip the UAC prompt (GPU/USB only)
+```
 
 ## Docs
 [Architecture](docs/ARCHITECTURE.md) · [Safe scanning](docs/SAFE_SCANNING.md)
