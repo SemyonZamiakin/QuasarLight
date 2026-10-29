@@ -1,0 +1,5 @@
+ui/**/bin/
+ui/**/obj/
+ui/QuasarLight.App/native/
+core/tests/*.exe
+*.exe
