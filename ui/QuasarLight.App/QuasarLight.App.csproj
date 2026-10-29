@@ -13,7 +13,6 @@
     <AssemblyName>QuasarLight</AssemblyName>
     <RootNamespace>QuasarLight</RootNamespace>
     <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
-    <InvariantGlobalization>true</InvariantGlobalization>
     <TieredPGO>true</TieredPGO>
   </PropertyGroup>
 

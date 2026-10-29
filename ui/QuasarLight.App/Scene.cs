@@ -164,7 +164,7 @@ namespace QuasarLight
         private static void AddAmbient(Canvas stage, DeviceVm dev, double cx, double cy, double w, double h)
         {
             var e = new Ellipse { Width = w, Height = h, Fill = dev.Ambient, Opacity = 0.5, IsHitTestVisible = false,
-                Effect = new BlurEffect { Radius = 55 } };
+                Effect = new BlurEffect { Radius = 45 } };
             Canvas.SetLeft(e, cx - w / 2); Canvas.SetTop(e, cy - h / 2);
             stage.Children.Add(e);
             dev.Visuals.Add(e);

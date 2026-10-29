@@ -36,7 +36,6 @@ namespace QuasarLight
             _saveTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(600) };
             _saveTimer.Tick += (_, __) => { _saveTimer.Stop(); SaveSettings(); };
 
-            StartAurora();
             BuildEffectChips();
             BuildPalette();
 
@@ -71,20 +70,8 @@ namespace QuasarLight
             foreach (var d in _devices)
             {
                 double o = sync || d == _selected ? 1.0 : 0.45;
-                foreach (var v in d.Visuals) v.Opacity = o * 0.5;
+                foreach (var v in d.Visuals) v.Opacity = o * 0.28;
             }
-        }
-
-        private void StartAurora()
-        {
-            void Drift(TranslateTransform tt, double dx, double dy, double secs)
-            {
-                var ax = new DoubleAnimation(-dx, dx, TimeSpan.FromSeconds(secs)) { AutoReverse = true, RepeatBehavior = RepeatBehavior.Forever, EasingFunction = new SineEase() };
-                var ay = new DoubleAnimation(-dy, dy, TimeSpan.FromSeconds(secs * 1.3)) { AutoReverse = true, RepeatBehavior = RepeatBehavior.Forever, EasingFunction = new SineEase() };
-                tt.BeginAnimation(TranslateTransform.XProperty, ax);
-                tt.BeginAnimation(TranslateTransform.YProperty, ay);
-            }
-            Drift(TA, 120, 80, 14); Drift(TB, -140, -90, 17); Drift(TC, 160, 110, 21);
         }
 
         // ---------- title bar ----------
@@ -102,6 +89,7 @@ namespace QuasarLight
             for (int i = 0; i < n; i++)
             {
                 var rb = new RadioButton { Content = Native.EffectName(i), Tag = i, GroupName = "fx", Style = (Style)FindResource("Chip") };
+                rb.Margin = new Thickness(0, 0, 6, 6);
                 rb.Checked += (s, _) => { if (!_loading) Apply(st => st.Type = (int)((RadioButton)s).Tag); };
                 EffectPanel.Children.Add(rb);
             }
@@ -111,13 +99,11 @@ namespace QuasarLight
         {
             foreach (uint c in PaletteColors)
             {
-                var color = Scene.FromRgb(c);
                 var sw = new Border
                 {
-                    Width = 30, Height = 30, CornerRadius = new CornerRadius(15), Margin = new Thickness(0, 0, 8, 8),
-                    Background = new SolidColorBrush(color), Cursor = Cursors.Hand,
-                    BorderBrush = new SolidColorBrush(Color.FromArgb(70, 255, 255, 255)), BorderThickness = new Thickness(1.5),
-                    Effect = new System.Windows.Media.Effects.DropShadowEffect { Color = color, BlurRadius = 12, ShadowDepth = 0, Opacity = 0.55 }
+                    Width = 22, Height = 22, CornerRadius = new CornerRadius(4), Margin = new Thickness(0, 0, 6, 6),
+                    Background = new SolidColorBrush(Scene.FromRgb(c)), Cursor = Cursors.Hand,
+                    BorderBrush = (Brush)FindResource("Line"), BorderThickness = new Thickness(1), ToolTip = "#" + c.ToString("X6")
                 };
                 uint cc = c;
                 sw.MouseLeftButtonUp += (_, __) => SetTargetColor(cc);
@@ -129,17 +115,22 @@ namespace QuasarLight
         {
             foreach (var d in _devices)
             {
-                var dot = new System.Windows.Shapes.Ellipse
+                var dot = new System.Windows.Shapes.Ellipse { Width = 8, Height = 8, Fill = d.Dot, VerticalAlignment = VerticalAlignment.Center };
+                var text = new StackPanel { Margin = new Thickness(12, 0, 0, 0) };
+                text.Children.Add(new TextBlock { Text = d.Title, FontSize = 13, FontWeight = FontWeights.SemiBold, Foreground = (Brush)FindResource("TextBrush") });
+                text.Children.Add(new TextBlock { Text = d.Subtitle, FontSize = 11, Foreground = (Brush)FindResource("MutedBrush"), Margin = new Thickness(0, 2, 0, 0), TextTrimming = TextTrimming.CharacterEllipsis, MaxWidth = 150 });
+                var badge = new Border
                 {
-                    Width = 14, Height = 14, Fill = d.Dot, VerticalAlignment = VerticalAlignment.Center,
-                    Effect = new System.Windows.Media.Effects.DropShadowEffect { Color = Colors.White, BlurRadius = 12, ShadowDepth = 0, Opacity = 0.7 }
+                    CornerRadius = new CornerRadius(3), Padding = new Thickness(5, 1, 5, 1), VerticalAlignment = VerticalAlignment.Center,
+                    Background = (Brush)FindResource("RaisedBg"), BorderBrush = (Brush)FindResource("Line"), BorderThickness = new Thickness(1),
+                    Child = new TextBlock { Text = "PREVIEW", FontSize = 9, FontWeight = FontWeights.SemiBold, Foreground = (Brush)FindResource("DimBrush") }
                 };
-                var text = new StackPanel { Margin = new Thickness(14, 0, 0, 0) };
-                text.Children.Add(new TextBlock { Text = d.Title, FontSize = 15, FontWeight = FontWeights.SemiBold, Foreground = Brushes.White });
-                text.Children.Add(new TextBlock { Text = d.Subtitle, FontSize = 12, Foreground = (Brush)FindResource("MutedBrush"), Margin = new Thickness(0, 3, 0, 0), TextTrimming = TextTrimming.CharacterEllipsis, MaxWidth = 190 });
-                var row = new StackPanel { Orientation = Orientation.Horizontal };
-                row.Children.Add(dot);
-                row.Children.Add(text);
+                var row = new DockPanel();
+                DockPanel.SetDock(badge, Dock.Right);
+                row.Children.Add(badge);
+                var left = new StackPanel { Orientation = Orientation.Horizontal };
+                left.Children.Add(dot); left.Children.Add(text);
+                row.Children.Add(left);
                 var rb = new RadioButton { Content = row, GroupName = "dev", Style = (Style)FindResource("DeviceRow"), Tag = d };
                 rb.Checked += (s, _) => Select((DeviceVm)((RadioButton)s).Tag);
                 d.Row = rb;
@@ -165,7 +156,14 @@ namespace QuasarLight
             BriSlider.Value = s.Brightness;
             ReverseBox.IsChecked = s.Reverse;
             _loading = false;
+            UpdateValueLabels();
             SyncHueFromTarget();
+        }
+
+        private void UpdateValueLabels()
+        {
+            SpeedVal.Text = (int)Math.Round(SpeedSlider.Value * 100) + "%";
+            BriVal.Text = (int)Math.Round(BriSlider.Value * 100) + "%";
         }
 
         private void Apply(Action<EffectSettings> change)
@@ -192,6 +190,8 @@ namespace QuasarLight
             var col = Scene.FromRgb(c);
             float h = System.Drawing.Color.FromArgb(col.R, col.G, col.B).GetHue();
             _loading = true; HueSlider.Value = h; _loading = false;
+            HexBox.Text = "#" + c.ToString("X6");
+            HexSwatch.Background = new SolidColorBrush(col);
             UpdateHueThumb();
         }
 
@@ -215,8 +215,21 @@ namespace QuasarLight
         private void Slider_Changed(object sender, RoutedPropertyChangedEventArgs<double> e)
         {
             if (_loading || !IsInitialized) return;
+            UpdateValueLabels();
             double sp = SpeedSlider.Value, br = BriSlider.Value;
             Apply(st => { st.Speed = sp; st.Brightness = br; });
+        }
+
+        private void Hex_Commit(object sender, RoutedEventArgs e)
+        {
+            string t = HexBox.Text.Trim().TrimStart('#');
+            if (t.Length == 6 && uint.TryParse(t, System.Globalization.NumberStyles.HexNumber, null, out uint rgb)) SetTargetColor(rgb);
+            else SyncHueFromTarget();  // invalid input: restore current value
+        }
+
+        private void Hex_KeyDown(object sender, KeyEventArgs e)
+        {
+            if (e.Key == Key.Enter) { Hex_Commit(sender, e); Keyboard.ClearFocus(); }
         }
 
         private void Toggle_Click(object sender, RoutedEventArgs e)
